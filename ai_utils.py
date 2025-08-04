@@ -15,13 +15,45 @@ from typing import Dict, Any, Optional, List
 import re
 import logging
 from functools import lru_cache
-from sentence_transformers import SentenceTransformer, util
+import gc
 
 load_dotenv()
 
 bedrock_call_lock = Lock()
 last_bedrock_call_time = 0
 MIN_CALL_INTERVAL = 1.0
+
+# Lazy loading for memory-heavy components
+_sentence_model = None
+_generic_embeddings = None
+
+def get_sentence_model():
+    """Lazy load the sentence transformer model"""
+    global _sentence_model
+    if _sentence_model is None:
+        from sentence_transformers import SentenceTransformer
+        _sentence_model = SentenceTransformer('all-MiniLM-L6-v2')
+    return _sentence_model
+
+def get_generic_embeddings():
+    """Lazy load generic response embeddings"""
+    global _generic_embeddings
+    if _generic_embeddings is None:
+        from sentence_transformers import util
+        GENERIC_RESPONSES = [
+            "I'm not sure.",
+            "I do not know.", 
+            "I don't have that information.",
+            "Sorry, I cannot answer that.",
+            "No information available.",
+            "Not available.",
+            "I have no idea.",
+            "I am unable to answer that.",
+            "I don't know the answer to that question."
+        ]
+        model = get_sentence_model()
+        _generic_embeddings = model.encode(GENERIC_RESPONSES)
+    return _generic_embeddings
 
 def call_bedrock(prompt: str, system_prompt: str = "") -> str:
     global last_bedrock_call_time
@@ -110,17 +142,22 @@ def needs_db_query(query: str) -> bool:
 def analyze_data(df: pd.DataFrame) -> Dict[str, Any]:
     if df.empty:
         return {"insights": "No data available for analysis"}
+    
     analysis = {"insights": f"Found {len(df)} records"}
     numeric_cols = df.select_dtypes(include=np.number).columns
+    
     if len(numeric_cols) > 0:
         main_col = numeric_cols[0]
-        analysis.update({
-            "mean": float(df[main_col].mean()),
-            "median": float(df[main_col].median()),
-            "max": float(df[main_col].max()),
-            "min": float(df[main_col].min()),
-            "insights": f"Data ranges from {df[main_col].min()} to {df[main_col].max()}"
-        })
+        # Use more memory-efficient operations
+        col_data = df[main_col].dropna()
+        if not col_data.empty:
+            analysis.update({
+                "mean": float(col_data.mean()),
+                "median": float(col_data.median()),
+                "max": float(col_data.max()),
+                "min": float(col_data.min()),
+                "insights": f"Data ranges from {col_data.min()} to {col_data.max()}"
+            })
     return analysis
 
 def format_results(data) -> Dict[str, Any]:
@@ -131,14 +168,20 @@ def format_results(data) -> Dict[str, Any]:
             "csv": ""
         }
     try:
-        df = pd.DataFrame(data)
-        markdown = df.to_markdown(index=False)
+        # Limit data size to prevent memory issues
+        limited_data = data[:1000] if len(data) > 1000 else data
+        df = pd.DataFrame(limited_data)
+        
+        # Use more memory-efficient operations
+        markdown = df.to_markdown(index=False, max_rows=50)
         csv_buffer = StringIO()
         df.to_csv(csv_buffer, index=False)
         csv = csv_buffer.getvalue()
+        csv_buffer.close()  # Explicitly close to free memory
+        
         return {
             "markdown": markdown,
-            "json": {"data": data},
+            "json": {"data": limited_data},
             "csv": csv
         }
     except Exception as e:
@@ -152,20 +195,26 @@ def format_results(data) -> Dict[str, Any]:
 def generate_chart_config(df: pd.DataFrame) -> Optional[Dict[str, Any]]:
     if df.empty:
         return None
+        
     date_col = next((col for col in df.columns if 'date' in col.lower()), None)
     quantity_col = next((col for col in df.columns if 'quantity' in col.lower() or 'total' in col.lower()), None)
+    
     if not date_col or not quantity_col:
         return None
+        
     try:
-        labels = df[date_col].astype(str).tolist()
-        data = df[quantity_col].astype(float).tolist()
+        # Limit chart data to prevent memory issues
+        chart_data = df.head(100) if len(df) > 100 else df
+        labels = chart_data[date_col].astype(str).tolist()
+        data_values = chart_data[quantity_col].astype(float).tolist()
+        
         return {
             "type": "bar",
             "data": {
                 "labels": labels,
                 "datasets": [{
                     "label": quantity_col,
-                    "data": data,
+                    "data": data_values,
                     "backgroundColor": "rgba(255, 140, 0, 0.5)",
                     "borderColor": "rgba(255, 140, 0, 1)",
                     "borderWidth": 1
@@ -180,17 +229,6 @@ def generate_chart_config(df: pd.DataFrame) -> Optional[Dict[str, Any]]:
         print(f"Chart generation error: {str(e)}")
         return None
 
-GENERIC_RESPONSES = [
-    "I'm not sure.",
-    "I do not know.",
-    "I don't have that information.",
-    "Sorry, I cannot answer that.",
-    "No information available.",
-    "Not available.",
-    "I have no idea.",
-    "I am unable to answer that.",
-    "I don't know the answer to that question."
-]
 GENERIC_PATTERNS = [
     r"\bi (do not|don't) (know|have)\b",
     r"\bno (information|data)\b",
@@ -200,25 +238,52 @@ GENERIC_PATTERNS = [
     r"\bunable to\b",
     r"\bno idea\b"
 ]
-sentence_model = SentenceTransformer('all-MiniLM-L6-v2')
-generic_embeddings = sentence_model.encode(GENERIC_RESPONSES)
 
 def is_generic_response(text: str, threshold: float = 0.78) -> bool:
+    """Check if response is generic using optimized approach"""
     if not text or len(text.strip().split()) < 6:
         return True
+    
     text_lower = text.lower()
+    
+    # Quick hardcoded phrases check
+    GENERIC_RESPONSES = [
+        "I'm not sure.",
+        "I do not know.",
+        "I don't have that information.",
+        "Sorry, I cannot answer that.",
+        "No information available.",
+        "Not available.",
+        "I have no idea.",
+        "I am unable to answer that.",
+        "I don't know the answer to that question."
+    ]
+    
     if any(generic.lower() in text_lower for generic in GENERIC_RESPONSES):
         return True
+    
+    # Regex patterns
     if any(re.search(pattern, text_lower) for pattern in GENERIC_PATTERNS):
         return True
-    text_embedding = sentence_model.encode([text])
-    similarities = util.cos_sim(text_embedding, generic_embeddings)
-    if similarities.max() > threshold:
-        return True
+    
+    # Only use semantic similarity as last resort to save memory
+    try:
+        from sentence_transformers import util
+        model = get_sentence_model()
+        embeddings = get_generic_embeddings()
+        text_embedding = model.encode([text])
+        similarities = util.cos_sim(text_embedding, embeddings)
+        if similarities.max() > threshold:
+            return True
+    except Exception as e:
+        logging.warning(f"Semantic similarity check failed: {e}")
+    
+    # Too short or mostly hedging/modal
     hedges = ["maybe", "perhaps", "possibly", "could", "might", "unsure", "uncertain"]
     hedge_count = sum(1 for h in hedges if h in text_lower)
     if hedge_count > 0 and len(text_lower.split()) < 12:
         return True
+    
     return False
 
 def build_prompt(query: str, history: Optional[List[dict]]) -> str:
@@ -239,6 +304,7 @@ def handle_db_query(query: str, chiller_id: Optional[int] = None, history: Optio
         prompt = f"{build_prompt(query, history or [])}\nChiller ID: {chiller_id}\n"
     else:
         prompt = build_prompt(query, history or [])
+    
     agent = get_sql_agent()
     try:
         result = agent.invoke({"input": prompt})
@@ -246,12 +312,14 @@ def handle_db_query(query: str, chiller_id: Optional[int] = None, history: Optio
         text = result.get("final_answer") or result.get("text") or result.get("output") or ""
         if "anthropic" in text.lower():
             text = "Hi, I am Ketha AI! Ask me anything about your farm data."
+        
         data = result.get("data", [])
         formats = format_results(data)
         is_table = bool(data)
         is_chart = False
         chart_config = {}
         analysis = {}
+        
         if data:
             df = pd.DataFrame(data)
             chart = generate_chart_config(df)
@@ -259,6 +327,10 @@ def handle_db_query(query: str, chiller_id: Optional[int] = None, history: Optio
                 is_chart = True
                 chart_config = chart
             analysis = analyze_data(df)
+            # Clean up DataFrame to free memory
+            del df
+            gc.collect()
+        
         return {
             "text": text,
             "final_answer": text,

@@ -1,20 +1,17 @@
 from fastapi import FastAPI, HTTPException, Request, Body
 from fastapi.middleware.cors import CORSMiddleware
-from ai_utils import handle_db_query, handle_general_query, needs_db_query
+from ai_utils import handle_db_query, handle_general_query, needs_db_query, is_generic_response
 from models import AIRequest, AIResponse
+from memory_utils import memory_cleanup, log_memory_usage, force_cleanup, get_detailed_memory_info
 import traceback
 import logging
 import re
-from sentence_transformers import SentenceTransformer, util
 from typing import List, Dict, Any
+import gc
 
 app = FastAPI()
 
 # CORS configuration
-origins = [
-    "*"
-]
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -23,74 +20,55 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-session_store = {}
+# Use a memory-efficient session store
+class LimitedSessionStore:
+    def __init__(self, max_users=100, max_history_per_user=10):
+        self.store = {}
+        self.max_users = max_users
+        self.max_history_per_user = max_history_per_user
+    
+    def get_session(self, user_id):
+        if user_id not in self.store:
+            if len(self.store) >= self.max_users:
+                # Remove oldest user session
+                oldest_user = next(iter(self.store))
+                del self.store[oldest_user]
+                gc.collect()
+            self.store[user_id] = []
+        return self.store[user_id]
+    
+    def add_to_session(self, user_id, entry):
+        session = self.get_session(user_id)
+        session.append(entry)
+        # Keep only recent history
+        if len(session) > self.max_history_per_user:
+            session[:] = session[-self.max_history_per_user:]
+    
+    def clear_session(self, user_id):
+        if user_id in self.store:
+            self.store[user_id] = []
+
+session_store = LimitedSessionStore()
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(message)s"
 )
 
-# Load the model once at startup
-sentence_model = SentenceTransformer('all-MiniLM-L6-v2')
-
-GENERIC_RESPONSES = [
-    "I'm not sure.",
-    "I do not know.",
-    "I don't have that information.",
-    "Sorry, I cannot answer that.",
-    "No information available.",
-    "Not available.",
-    "I have no idea.",
-    "I am unable to answer that.",
-    "I don't know the answer to that question."
-]
-
-GENERIC_PATTERNS = [
-    r"\bi (do not|don't) (know|have)\b",
-    r"\bno (information|data)\b",
-    r"\bnot (available|sure)\b",
-    r"\bsorry\b",
-    r"\bcannot answer\b",
-    r"\bunable to\b",
-    r"\bno idea\b"
-]
-
-# Precompute embeddings for generic responses
-generic_embeddings = sentence_model.encode(GENERIC_RESPONSES)
-
-def is_generic_response(text: str, threshold: float = 0.78) -> bool:
-    if not text or len(text.strip().split()) < 6:
-        return True
-    text_lower = text.lower()
-    # Hardcoded phrases
-    if any(generic.lower() in text_lower for generic in GENERIC_RESPONSES):
-        return True
-    # Regex patterns
-    if any(re.search(pattern, text_lower) for pattern in GENERIC_PATTERNS):
-        return True
-    # Semantic similarity
-    text_embedding = sentence_model.encode([text])
-    similarities = util.cos_sim(text_embedding, generic_embeddings)
-    if similarities.max() > threshold:
-        return True
-    # Too short or mostly hedging/modal
-    hedges = ["maybe", "perhaps", "possibly", "could", "might", "unsure", "uncertain"]
-    hedge_count = sum(1 for h in hedges if h in text_lower)
-    if hedge_count > 0 and len(text_lower.split()) < 12:
-        return True
-    return False
-
 @app.post("/query", response_model=AIResponse)
+@memory_cleanup
 async def query_ai(request: AIRequest):
+    log_memory_usage("before query")
     logging.info(f"Received request: user_id={request.user_id}, query={request.query}, chiller_id={request.chiller_id}")
-    user_session = session_store.setdefault(request.user_id, [])
+    user_session = session_store.get_session(request.user_id)
     try:
         # Use history from request if provided, else fallback to session
         history = request.history if request.history else user_session[-4:] if len(user_session) > 0 else []
         if needs_db_query(request.query):
             response = handle_db_query(request.query, chiller_id=request.chiller_id, history=history)
             logging.info(f"AI DB Response: {response}")
-            user_session.append({"user": request.query, "ai": response.get("final_answer") or response.get("text", "")})
+            session_store.add_to_session(request.user_id, {"user": request.query, "ai": response.get("final_answer") or response.get("text", "")})
+            log_memory_usage("after DB query")
             return {
                 "text": response.get("final_answer") or response.get("text") or "Here are your results:",
                 "isReport": response.get("isReport", True),
@@ -103,14 +81,16 @@ async def query_ai(request: AIRequest):
             if is_generic_response(ai_text):
                 logging.info("General response was generic, falling back to DB.")
                 response = handle_db_query(request.query, chiller_id=request.chiller_id, history=history)
-                user_session.append({"user": request.query, "ai": response.get("final_answer") or response.get("text", "")})
+                session_store.add_to_session(request.user_id, {"user": request.query, "ai": response.get("final_answer") or response.get("text", "")})
+                log_memory_usage("after fallback DB query")
                 return {
                     "text": response.get("final_answer") or response.get("text") or "Here are your results:",
                     "isReport": response.get("isReport", True),
                     "isTable": response.get("isTable", True),
                     **response
                 }
-            user_session.append({"user": request.query, "ai": ai_text})
+            session_store.add_to_session(request.user_id, {"user": request.query, "ai": ai_text})
+            log_memory_usage("after general query")
             return {
                 "text": ai_text,
                 "isReport": False
@@ -118,6 +98,7 @@ async def query_ai(request: AIRequest):
     except Exception as e:
         error_trace = traceback.format_exc()
         logging.error(f"Error processing query: {error_trace}")
+        force_cleanup()  # Force cleanup on error
         return {
             "text": f"Error processing your query: {str(e)}",
             "isReport": False
@@ -127,8 +108,7 @@ async def query_ai(request: AIRequest):
 async def clear_conversation(payload: dict = Body(...)):
     user_id = payload.get("user_id")
     chiller_id = payload.get("chiller_id")  # Not strictly needed for session, but included for completeness
-    if user_id in session_store:
-        session_store[user_id] = []
+    session_store.clear_session(user_id)
     logging.info(f"Cleared conversation for user_id={user_id}, chiller_id={chiller_id}")
     return {"status": "cleared"}
 
@@ -137,6 +117,41 @@ async def debug_route(payload: dict = Body(...)):
     query = payload.get("query", "")
     route = "db" if needs_db_query(query) else "bedrock"
     return {"route": route}
+
+@app.post("/health")
+async def health_check():
+    """Health check endpoint with detailed memory status"""
+    try:
+        log_memory_usage("health check", detailed=True)
+        memory_info = get_detailed_memory_info()
+        
+        status = "healthy"
+        if "error" not in memory_info:
+            if memory_info["rss_mb"] > 450:
+                status = "critical_memory"
+            elif memory_info["rss_mb"] > 350:
+                status = "high_memory"
+        
+        return {
+            "status": status,
+            "memory_optimized": True,
+            "memory_info": memory_info
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+@app.post("/cleanup")
+async def manual_cleanup():
+    """Manual cleanup endpoint for maintenance"""
+    try:
+        force_cleanup()
+        log_memory_usage("after manual cleanup", detailed=True)
+        return {
+            "status": "cleanup completed",
+            "memory_info": get_detailed_memory_info()
+        }
+    except Exception as e:
+        return {"status": "cleanup failed", "error": str(e)}
 
 if __name__ == "__main__":
     import uvicorn

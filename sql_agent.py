@@ -7,6 +7,8 @@ from langchain.agents import AgentExecutor, create_react_agent
 from langchain.prompts import PromptTemplate
 from sqlalchemy import inspect
 from datetime import datetime
+from functools import lru_cache
+import logging
 
 def get_sql_agent():
     engine = get_db_engine()
@@ -92,6 +94,7 @@ Thought: {{agent_scratchpad}}
         max_iterations=5
     )
 
+@lru_cache(maxsize=1)
 def get_schema_summary():
     """
     Returns a concise schema summary for all tables in the connected database.
@@ -102,17 +105,28 @@ def get_schema_summary():
     engine = get_db_engine()
     inspector = inspect(engine)
     lines = []
-    for table_name in sorted(inspector.get_table_names()):
-        columns = inspector.get_columns(table_name)
-        col_names = [col['name'] for col in columns]
-        # Show up to 6 columns, then ellipsis if more
-        if len(col_names) > 6:
-            col_list = ', '.join(col_names[:6]) + ', ...'
-        else:
-            col_list = ', '.join(col_names)
-        lines.append(f"- {table_name}({col_list})")
+    
+    # Get table names and limit processing to prevent memory issues
+    table_names = sorted(inspector.get_table_names())
+    
+    for table_name in table_names:
+        try:
+            columns = inspector.get_columns(table_name)
+            col_names = [col['name'] for col in columns]
+            # Show up to 6 columns, then ellipsis if more
+            if len(col_names) > 6:
+                col_list = ', '.join(col_names[:6]) + ', ...'
+            else:
+                col_list = ', '.join(col_names)
+            lines.append(f"- {table_name}({col_list})")
+        except Exception as e:
+            # Skip tables that cause issues to prevent memory problems
+            logging.warning(f"Skipping table {table_name}: {e}")
+            continue
+    
     return "\n".join(lines)
 
+@lru_cache(maxsize=1) 
 def get_join_guides():
     """
     Returns a list of join relationships in the format:
@@ -121,12 +135,23 @@ def get_join_guides():
     engine = get_db_engine()
     inspector = inspect(engine)
     join_lines = []
-    for table in sorted(inspector.get_table_names()):
-        for fk in inspector.get_foreign_keys(table):
-            if fk['referred_table'] and fk['referred_columns'] and fk['constrained_columns']:
-                join_lines.append(
-                    f"- {table}.{fk['constrained_columns'][0]} → {fk['referred_table']}.{fk['referred_columns'][0]}"
-                )
+    
+    try:
+        table_names = sorted(inspector.get_table_names())
+        for table in table_names:
+            try:
+                for fk in inspector.get_foreign_keys(table):
+                    if fk['referred_table'] and fk['referred_columns'] and fk['constrained_columns']:
+                        join_lines.append(
+                            f"- {table}.{fk['constrained_columns'][0]} → {fk['referred_table']}.{fk['referred_columns'][0]}"
+                        )
+            except Exception as e:
+                # Skip problematic foreign keys
+                logging.warning(f"Skipping foreign keys for table {table}: {e}")
+                continue
+    except Exception as e:
+        logging.error(f"Error getting join guides: {e}")
+    
     return "\n".join(join_lines)
 
 # Usage in your prompt:
