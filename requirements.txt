@@ -1,0 +1,15 @@
+fastapi
+uvicorn
+python-dotenv
+langchain
+langchain-community
+langchain-experimental
+sqlalchemy
+psycopg2-binary
+boto3
+pandas
+numpy
+matplotlib
+langchain-aws>=0.1.0
+tabulate
+sentence-transformers

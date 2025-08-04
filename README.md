@@ -1,93 +1,160 @@
-# AI-agent
+# Ketha AI Agent
 
+Ketha AI Agent is an intelligent backend service for answering natural language questions about your farm business data. It uses a combination of LLMs (Anthropic Claude via AWS Bedrock), LangChain, and your PostgreSQL database to provide accurate, context-aware answers, reports, and visualizations.
 
+---
 
-## Getting started
+## Features
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+- **Natural Language to SQL:** Converts user questions into SQL queries using an LLM agent, executes them, and returns results.
+- **Automatic Schema Discovery:** Reads your live database schema and join relationships at runtime.
+- **Chiller/Farmer/User Name Resolution:** Always refers to chillers, farmers, and users by name (not ID) unless the user explicitly asks for the ID.
+- **Contextual Answers:** Uses recent conversation history for more relevant responses.
+- **Fallback to General AI:** If a question is not about your data, falls back to general LLM knowledge.
+- **Error Handling:** Logs all backend errors but only returns user-friendly messages to the frontend.
+- **Session Management:** Maintains per-user conversation history.
+- **Data Analysis & Visualization:** Returns tabular data, summary statistics, and chart configs for visualization.
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+---
 
-## Add your files
+## How It Works
 
-- [ ] [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-- [ ] [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
+### 1. **User Query**
+
+- The frontend sends a POST request to `/query` with:
+  - `user_id`: Unique user identifier
+  - `query`: The user's question in natural language
+  - `chiller_id`: (Optional) The chiller context for filtering
+  - `history`: (Optional) Recent conversation turns
+
+### 2. **Routing**
+
+- The backend (`main.py`) uses keyword and pattern matching (`needs_db_query`) to decide:
+  - **Database Query:** If the question is about your data (e.g., "What is my chiller name?"), it routes to the SQL agent.
+  - **General AI:** Otherwise, it uses the LLM for a general answer.
+
+### 3. **SQL Agent**
+
+- The agent (`sql_agent.py`) is built with LangChain and Anthropic Claude.
+- It reads your live database schema and join relationships using SQLAlchemy.
+- The agent prompt enforces rules:
+  - Always use names, not IDs, for chillers, farmers, and users.
+  - Always join tables correctly.
+  - Only use IDs if the user explicitly asks.
+  - Never use `SELECT *`; always specify columns.
+  - Use correct date/time handling and grouping.
+- The agent generates a SQL query, executes it, and formats the results.
+
+### 4. **Response Formatting**
+
+- Results are formatted as:
+  - **Text answer** (e.g., "Your chiller name is Nutrinuts Bura.")
+  - **Tabular data** (if applicable)
+  - **Summary statistics** (mean, median, etc.)
+  - **Chart config** (for visualization)
+- If an error occurs, it is logged, and a generic error message is returned to the user.
+
+### 5. **Session & History**
+
+- Each user's conversation is stored in memory for context.
+- The last 4 turns are used to provide context to the agent.
+
+---
+
+## File Structure
 
 ```
-cd existing_repo
-git remote add origin https://git.ketha.africa/pocs/ai/ai-agent.git
-git branch -M main
-git push -uf origin main
+ketha-ai-agent/
+│
+├── main.py           # FastAPI app, routing, session, error handling
+├── ai_utils.py       # Core logic: routing, formatting, error handling
+├── sql_agent.py      # LangChain SQL agent, schema/joins, prompt rules
+├── database.py       # SQLAlchemy DB connection and query execution
+├── models.py         # Pydantic models for request/response
+├── requirements.txt  # Python dependencies
+└── ...
 ```
 
-## Integrate with your tools
+---
 
-- [ ] [Set up project integrations](https://git.ketha.africa/pocs/ai/ai-agent/-/settings/integrations)
+## Setup & Running
 
-## Collaborate with your team
+1. **Install dependencies:**
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-- [ ] [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-- [ ] [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-- [ ] [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-- [ ] [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-- [ ] [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+2. **Configure environment:**
+   - Set up your `.env` file with:
+     ```
+     DATABASE_URL=postgresql://user:password@host:port/dbname
+     AWS_REGION=...
+     AWS_ACCESS_KEY_ID=...
+     AWS_SECRET_ACCESS_KEY=...
+     ```
 
-## Test and Deploy
+3. **Run the server:**
+   ```bash
+   uvicorn main:app --reload --host 0.0.0.0 --port 8000
+   ```
 
-Use the built-in continuous integration in GitLab.
+4. **Test the API:**
+   - POST to `http://localhost:8000/query` with a JSON body:
+     ```json
+     {
+       "user_id": "user123",
+       "query": "What is my chiller name?",
+       "chiller_id": 2
+     }
+     ```
 
-- [ ] [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/)
-- [ ] [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-- [ ] [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-- [ ] [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-- [ ] [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
+---
 
-***
+## Customization
 
-# Editing this README
+- **Schema/Join Rules:** The agent always uses the live schema and join info. To add more rules, edit the prompt in `sql_agent.py`.
+- **Error Handling:** All backend errors are logged; users only see friendly messages.
+- **Session Storage:** By default, session history is in memory. For production, use Redis or a database.
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+---
 
-## Suggestions for a good README
+## Troubleshooting
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+- **Agent returns wrong columns or joins:**  
+  Ensure your database schema is up-to-date and accessible. The agent reads the schema at runtime.
+- **Agent returns IDs instead of names:**  
+  The prompt enforces name usage. If your schema uses different column names for names, update the prompt rules.
+- **No response or errors:**  
+  Check backend logs for details. All errors are logged with stack traces.
 
-## Name
-Choose a self-explaining name for your project.
+---
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+## Security
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+- **Never expose your API keys or database credentials.**
+- **CORS is set to allow all origins for development.** Restrict this in production.
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+---
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+## Extending
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+- Add more tools (e.g., for external APIs) by extending the agent in `sql_agent.py`.
+- Add more analysis or visualization logic in `ai_utils.py`.
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
-
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
-
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
-
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
-
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
-
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+---
 
 ## License
-For open source projects, say how it is licensed.
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+MIT License
+
+---
+
+## Authors
+
+- [Ian Kiarie / Ketha Technologies]
+
+---
+
+## Support
+
+For issues, open a GitHub issue or contact the maintainers.
