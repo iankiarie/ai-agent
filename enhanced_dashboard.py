@@ -1596,7 +1596,7 @@ def create_enhanced_dashboard_html():
                     KETHA AI COMMAND CENTER
                 </h1>
                 <div class="header-controls">
-                    <button class="export-btn" onclick="exportMetrics()">📊 EXPORT DATA</button>
+                    <button class="export-btn" onclick="exportMetrics()">Export Data</button>
                     <button class="refresh-btn" onclick="forceCleanup()">🧹 CLEANUP</button>
                     <button class="refresh-btn" onclick="refreshData()">🔄 REFRESH</button>
                 </div>
@@ -1605,17 +1605,15 @@ def create_enhanced_dashboard_html():
         
         <div class="container">
             <div id="alert-banner" class="alert-banner">
-                <strong>⚠️ Alert:</strong> <span id="alert-message"></span>
+                <strong>Alert:</strong> <span id="alert-message"></span>
             </div>
             
-            <div class="tabs">
-                <div class="tab active" onclick="switchTab('overview')">📊 OVERVIEW</div>
-                <div class="tab" onclick="switchTab('performance')">⚡ PERFORMANCE</div>
-                <div class="tab" onclick="switchTab('optimization')">🚀 OPTIMIZATION</div>
-                <div class="tab" onclick="switchTab('activity')">👥 ACTIVITY LOG</div>
-            </div>
-            
-            <!-- Overview Tab -->
+                <div class="tabs">
+                    <div class="tab active" onclick="switchTab('overview')">Overview</div>
+                    <div class="tab" onclick="switchTab('performance')">Performance</div>
+                    <div class="tab" onclick="switchTab('optimization')">Optimization</div>
+                    <div class="tab" onclick="switchTab('activity')">Activity Log</div>
+                </div>            <!-- Overview Tab -->
             <div id="overview-tab" class="tab-content active">
                 <div class="metrics-grid" id="metrics-grid">
                     <!-- Metrics populated by JavaScript -->
@@ -1623,11 +1621,11 @@ def create_enhanced_dashboard_html():
                 
                 <div class="charts-section">
                     <div class="chart-container">
-                        <div class="chart-title">📈 SYSTEM METRICS ANALYSIS</div>
+                        <div class="chart-title">System Performance</div>
                         <canvas id="memoryChart" width="400" height="200"></canvas>
                     </div>
                     <div class="chart-container">
-                        <div class="chart-title">📊 QUERY DISTRIBUTION</div>
+                        <div class="chart-title">Query Distribution</div>
                         <canvas id="queryDistChart" width="300" height="200"></canvas>
                     </div>
                 </div>
@@ -1640,7 +1638,7 @@ def create_enhanced_dashboard_html():
                 </div>
                 
                 <div class="chart-container">
-                    <div class="chart-title">⚡ PERFORMANCE ANALYTICS</div>
+                    <div class="chart-title">Performance Analytics</div>
                     <canvas id="responseTimeChart" width="800" height="300"></canvas>
                 </div>
             </div>
@@ -1655,7 +1653,7 @@ def create_enhanced_dashboard_html():
             <!-- Activity Tab -->
             <div id="activity-tab" class="tab-content">
                 <div class="data-table">
-                    <div class="chart-title">👥 SYSTEM ACTIVITY LOG</div>
+                    <div class="chart-title">System Activity Log</div>
                     <div class="table-responsive">
                         <table id="activity-table">
                             <thead>
@@ -1762,21 +1760,21 @@ def create_enhanced_dashboard_html():
                         trend: 'good'
                     },
                     {
-                        icon: '⚡',
+                        icon: 'PERF',
                         value: Math.round(stats.avg_response_time * 1000),
                         unit: 'ms',
                         label: 'Avg Response',
                         trend: stats.avg_response_time < 2 ? 'good' : stats.avg_response_time < 5 ? 'warning' : 'critical'
                     },
                     {
-                        icon: '❌',
+                        icon: 'ERR',
                         value: Math.round(stats.error_rate * 10) / 10,
                         unit: '%',
                         label: 'Error Rate',
                         trend: stats.error_rate < 5 ? 'good' : stats.error_rate < 10 ? 'warning' : 'critical'
                     },
                     {
-                        icon: '👥',
+                        icon: 'USR',
                         value: stats.active_users,
                         unit: '',
                         label: 'Active Users',
@@ -1792,7 +1790,7 @@ def create_enhanced_dashboard_html():
                         <div class="metric-value">${metric.value}<span style="font-size: 1rem; opacity: 0.7;">${metric.unit}</span></div>
                         <div class="metric-label">${metric.label}</div>
                         <div class="metric-trend trend-${metric.trend === 'good' ? 'down' : metric.trend === 'warning' ? 'stable' : 'up'}">
-                            ${metric.trend === 'good' ? '✅ Optimal' : metric.trend === 'warning' ? '⚠️ Monitor' : '🚨 Action Required'}
+                            ${metric.trend === 'good' ? 'Optimal' : metric.trend === 'warning' ? 'Monitor' : 'Action Required'}
                         </div>
                     </div>
                 `).join('');
@@ -1932,7 +1930,7 @@ def create_enhanced_dashboard_html():
                         </div>
                     </div>
                     <div class="bottleneck-card medium">
-                        <h3>👥 User Activity</h3>
+                        <h3>User Activity</h3>
                         <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem; margin-top: 1rem;">
                             <div style="text-align: center; padding: 1rem; background: rgba(0,0,0,0.05); border-radius: 8px;">
                                 <div style="font-size: 1.5rem; font-weight: bold; color: #27ae60;">${userActivity.active_users || 0}</div>
@@ -2015,7 +2013,7 @@ def create_enhanced_dashboard_html():
                 
                 if (allSuggestions.length === 0) {
                     allSuggestions.push({
-                        title: '✅ System Operating Optimally',
+                        title: 'System Operating Optimally',
                         desc: 'All performance metrics are within acceptable ranges. No immediate optimizations required.',
                         actions: ['Continue monitoring system performance', 'Maintain current configuration', 'Regular maintenance schedule'],
                         priority: 'info',
@@ -2026,7 +2024,7 @@ def create_enhanced_dashboard_html():
                 optimizationGrid.innerHTML = allSuggestions.map(suggestion => `
                     <div class="optimization-card">
                         <h3 style="margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem;">
-                            ${suggestion.type === 'bottleneck' ? '⚠️' : suggestion.type === 'optimization' ? '🚀' : '✅'} 
+                            ${suggestion.type === 'bottleneck' ? '[!]' : suggestion.type === 'optimization' ? '[+]' : '[✓]'} 
                             ${suggestion.title}
                             <span style="font-size: 0.7rem; padding: 0.2rem 0.5rem; background: rgba(255,255,255,0.2); border-radius: 12px; text-transform: uppercase;">${suggestion.priority}</span>
                         </h3>
