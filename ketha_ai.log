@@ -1,0 +1,27 @@
+2025-08-05 08:58:48,971 - root - INFO - Memory usage before query: 128.40 MB
+2025-08-05 08:58:48,992 - root - INFO - Received request: user_id=35, query=Hi, What is my chiller name ?, chiller_id=5
+2025-08-05 08:58:50,581 - root - INFO - Routing to DB: matched keyword 'name'
+2025-08-05 08:58:50,581 - root - INFO - Routing to DB: matched keyword 'name'
+2025-08-05 08:59:03,450 - root - INFO - AI DB Response: {'text': 'Your chiller name is Chepsir Cooler.', 'final_answer': 'Your chiller name is Chepsir Cooler.', 'data': [], 'formats': {'markdown': 'No data available', 'json': {'data': []}, 'csv': ''}, 'isReport': False, 'isTable': False, 'isChart': False, 'chartConfig': {}, 'analysis': {}}
+2025-08-05 08:59:03,455 - root - INFO - Memory usage after DB query: 151.38 MB
+2025-08-05 09:26:39,377 - root - INFO - Memory usage after manual cleanup: 130.39 MB (RSS: 130.39 MB, VMS: 209.18 MB, Process: 0.5%)
+2025-08-05 09:27:44,065 - root - INFO - Cleared conversation for user_id=35, chiller_id=5
+2025-08-05 09:27:57,964 - root - INFO - Memory usage before query: 131.20 MB
+2025-08-05 09:27:58,092 - root - INFO - Received request: user_id=35, query=How many farmers ?, chiller_id=5
+2025-08-05 09:27:59,638 - root - INFO - Routing to DB: matched keyword 'how many'
+2025-08-05 09:27:59,640 - root - INFO - Routing to DB: matched keyword 'how many'
+2025-08-05 09:28:14,404 - root - INFO - AI DB Response: {'text': "For the chiller with ID 5, which is 'Chepsir Cooler', there are 3 farmers.", 'final_answer': "For the chiller with ID 5, which is 'Chepsir Cooler', there are 3 farmers.", 'data': [], 'formats': {'markdown': 'No data available', 'json': {'data': []}, 'csv': ''}, 'isReport': False, 'isTable': False, 'isChart': False, 'chartConfig': {}, 'analysis': {}}
+2025-08-05 09:28:14,477 - root - INFO - Memory usage after DB query: 153.88 MB
+2025-08-05 09:29:21,525 - root - INFO - Memory usage before query: 154.07 MB
+2025-08-05 09:29:21,531 - root - INFO - Received request: user_id=35, query=List them in order, according to sales, chiller_id=5
+2025-08-05 09:29:21,536 - root - INFO - Routing to DB: matched keyword 'list'
+2025-08-05 09:29:21,541 - root - INFO - Routing to DB: matched keyword 'list'
+2025-08-05 09:29:46,338 - root - INFO - AI DB Response: {'text': "The farmers for the chiller 'Chepsir Cooler' (ID 5) listed in order of total sales are:\n\n1. Geoffrey Koetch with 28.20 kg total sales\n2. Eric Togom with 22.00 kg total sales  \n3. Saitama San with 15.00 kg total sales", 'final_answer': "The farmers for the chiller 'Chepsir Cooler' (ID 5) listed in order of total sales are:\n\n1. Geoffrey Koetch with 28.20 kg total sales\n2. Eric Togom with 22.00 kg total sales  \n3. Saitama San with 15.00 kg total sales", 'data': [], 'formats': {'markdown': 'No data available', 'json': {'data': []}, 'csv': ''}, 'isReport': False, 'isTable': False, 'isChart': False, 'chartConfig': {}, 'analysis': {}}
+2025-08-05 09:29:46,386 - root - INFO - Memory usage after DB query: 155.47 MB
+2025-08-05 09:30:37,926 - root - INFO - Memory usage after manual cleanup: 155.32 MB (RSS: 155.32 MB, VMS: 230.74 MB, Process: 0.6%)
+2025-08-05 09:31:00,265 - root - INFO - Memory usage before query: 153.22 MB
+2025-08-05 09:31:00,268 - root - INFO - Received request: user_id=35, query=What is The first one's ID ?, chiller_id=5
+2025-08-05 09:31:00,272 - root - INFO - Routing to DB: matched keyword 'id'
+2025-08-05 09:31:00,273 - root - INFO - Routing to DB: matched keyword 'id'
+2025-08-05 09:31:17,140 - root - INFO - AI DB Response: {'text': "The ID of the farmer with the highest total sales for the chiller 'Chepsir Cooler' (ID 5) is 27.", 'final_answer': "The ID of the farmer with the highest total sales for the chiller 'Chepsir Cooler' (ID 5) is 27.", 'data': [], 'formats': {'markdown': 'No data available', 'json': {'data': []}, 'csv': ''}, 'isReport': False, 'isTable': False, 'isChart': False, 'chartConfig': {}, 'analysis': {}}
+2025-08-05 09:31:17,142 - root - INFO - Memory usage after DB query: 155.75 MB
