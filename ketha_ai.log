@@ -25,3 +25,4 @@
 2025-08-05 09:31:00,273 - root - INFO - Routing to DB: matched keyword 'id'
 2025-08-05 09:31:17,140 - root - INFO - AI DB Response: {'text': "The ID of the farmer with the highest total sales for the chiller 'Chepsir Cooler' (ID 5) is 27.", 'final_answer': "The ID of the farmer with the highest total sales for the chiller 'Chepsir Cooler' (ID 5) is 27.", 'data': [], 'formats': {'markdown': 'No data available', 'json': {'data': []}, 'csv': ''}, 'isReport': False, 'isTable': False, 'isChart': False, 'chartConfig': {}, 'analysis': {}}
 2025-08-05 09:31:17,142 - root - INFO - Memory usage after DB query: 155.75 MB
+2025-08-05 10:38:29,661 - root - INFO - Memory usage after manual cleanup: 129.75 MB (RSS: 129.75 MB, VMS: 205.75 MB, Process: 0.5%)

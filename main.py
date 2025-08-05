@@ -30,9 +30,9 @@ logger = logging.getLogger(__name__)
 try:
     from ai_utils import handle_db_query, handle_general_query, needs_db_query, is_generic_response
     AI_ENABLED = True
-    logger.info("✅ AI utilities loaded successfully")
+    logger.info("AI utilities loaded successfully")
 except Exception as e:
-    logger.error(f"❌ Failed to load AI utilities: {e}")
+    logger.error(f"Failed to load AI utilities: {e}")
     AI_ENABLED = False
     
     # Fallback functions when AI is not available
@@ -53,17 +53,17 @@ app = FastAPI(title="Ketha AI Agent", description="SQL Agent with Admin Dashboar
 @app.on_event("startup")
 async def startup_event():
     """Startup event handler"""
-    logger.info("🚀 Ketha AI Agent is starting up...")
-    logger.info(f"🔧 AI Services: {'Enabled' if AI_ENABLED else 'Disabled - Check AWS credentials and database'}")
-    logger.info("✅ Server startup completed successfully")
+    logger.info("Starting Ketha AI Agent...")
+    logger.info(f"AI Services: {'Enabled' if AI_ENABLED else 'Disabled - Check AWS credentials and database'}")
+    logger.info("Server startup completed successfully")
 
 @app.on_event("shutdown") 
 async def shutdown_event():
     """Shutdown event handler"""
-    logger.info("🛑 Ketha AI Agent is shutting down...")
+    logger.info("Ketha AI Agent is shutting down...")
     # Clean up resources
     gc.collect()
-    logger.info("✅ Shutdown completed")
+    logger.info("Shutdown completed")
 
 # CORS configuration
 app.add_middleware(
@@ -510,16 +510,16 @@ if __name__ == "__main__":
     try:
         import uvicorn
         port = int(os.environ.get("PORT", 8000))
-        logger.info(f"🚀 Starting Ketha AI Agent on port {port}")
-        logger.info(f"🔧 AI Services: {'Enabled' if AI_ENABLED else 'Disabled'}")
-        logger.info(f"🌐 Access admin dashboard at: http://localhost:{port}/admin")
+        logger.info(f"Starting Ketha AI Agent on port {port}")
+        logger.info(f"AI Services: {'Enabled' if AI_ENABLED else 'Disabled'}")
+        logger.info(f"Access admin dashboard at: http://localhost:{port}/admin")
         
         # Test critical components before starting
         try:
             test_memory = get_detailed_memory_info()
-            logger.info(f"💾 Memory check: {test_memory.get('used_mb', 0)}MB used")
+            logger.info(f"Memory check: {test_memory.get('used_mb', 0)}MB used")
         except Exception as e:
-            logger.warning(f"⚠️ Memory monitoring may be limited: {e}")
+            logger.warning(f"Memory monitoring may be limited: {e}")
         
         uvicorn.run(
             app, 
@@ -529,7 +529,7 @@ if __name__ == "__main__":
             log_level="info"
         )
     except Exception as e:
-        logger.error(f"❌ Failed to start server: {e}")
-        logger.error("🔍 Check your environment variables and dependencies")
+        logger.error(f"Failed to start server: {e}")
+        logger.error("Check your environment variables and dependencies")
         import traceback
         traceback.print_exc()

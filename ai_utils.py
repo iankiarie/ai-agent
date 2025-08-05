@@ -104,6 +104,21 @@ def get_schema_words():
     return schema_words
 
 def needs_db_query(query: str) -> bool:
+    """Determine if a query needs database access"""
+    query_lower = query.lower().strip()
+    
+    # Simple greetings that definitely don't need DB
+    simple_greetings = [
+        "hi", "hello", "hey", "good morning", "good afternoon", "good evening",
+        "how are you", "what's up", "greetings", "hola", "bonjour"
+    ]
+    
+    # Check for exact matches or very short greetings
+    if query_lower in simple_greetings or len(query_lower) <= 3:
+        logging.info("Routing to Bedrock: simple greeting")
+        return False
+    
+    # Database-related keywords
     keywords = [
         "data", "milk", "collection", "farmer", "payment", "report", "table", 
         "list", "show", "how many", "total", "average", "sum", "trend", 
@@ -112,25 +127,30 @@ def needs_db_query(query: str) -> bool:
         "count", "amount", "number", "history", "record", "records", "summary", "status", "balance", "due",
         "chiller", "farmer", "staff", "user", "zone", "transporter", "payment", "collection", "date", "quantity"
     ]
+    
     schema_words = get_schema_words()
     keywords.extend(schema_words)
+    
     entity_patterns = [
         r"\bmy\b", r"\bour\b", r"\bthe\b", r"\bthis\b", r"\bthese\b",
         r"\bchiller\s+\d+\b", r"\bfarm(er)?\s+\d+\b", r"\bstaff\s+\d+\b", r"\buser\s+\d+\b",
         r"\bid\s*=\s*\d+\b", r"\bchiller\s+name\b", r"\bfarm(er)?\s+name\b"
     ]
-    query_lower = query.lower()
+    
     for keyword in keywords:
         if re.search(rf"\b{re.escape(keyword)}\b", query_lower):
             logging.info(f"Routing to DB: matched keyword '{keyword}'")
             return True
+            
     for pattern in entity_patterns:
         if re.search(pattern, query_lower):
             logging.info(f"Routing to DB: matched pattern '{pattern}'")
             return True
+            
     if re.search(r"\b\d+\b", query_lower) and any(entity in query_lower for entity in ["chiller", "farmer", "staff", "user"]):
         logging.info("Routing to DB: contains number and known entity")
         return True
+        
     question_words = ["what", "who", "when", "where", "how", "which"]
     if any(query_lower.startswith(qw) for qw in question_words):
         if any(entity in query_lower for entity in schema_words):

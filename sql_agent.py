@@ -44,6 +44,7 @@ Rules:
 11. When referring to a user, always use their name (from users_user.first_name, surname, or username) not their ID, unless the user explicitly asks for the ID.
 12. When presenting results or answers, always refer to chillers, farmers, and users by their names instead of their IDs, unless the user explicitly asks for the ID.
 13. If a user question can be answered using the database (e.g., about farmers, milk, chillers, payments, collections, etc.), always use the database and generate a SQL query. Only answer from general knowledge if the question is not about the data in the database.
+14. For simple greetings like "Hi", "Hello", "Hey" - respond directly without using SQL queries.
 
 Current Date: {current_date}
 
@@ -53,16 +54,17 @@ You have access to the following tool:
 Use the following format:
 Question: the input question you must answer
 Thought: you should always think about what to do
-Action: the action to take, must be: query_sql_db
-Action Input: the SQL query string ONLY (without any extra formatting)
+Action: the action to take, must be: query_sql_db OR skip_sql (for greetings/non-data questions)
+Action Input: the SQL query string ONLY (without any extra formatting) OR "direct_response"
 Observation: the result of the action
 ... (this Thought/Action Input/Observation can repeat N times)
 Thought: I now know the final answer
 Final Answer: the final answer to the original input question
 
 IMPORTANT:
-- Action Input must contain ONLY the SQL query string
-- Do not wrap the query in quotes or any other formatting
+- For simple greetings (Hi, Hello, Hey), use: Action: skip_sql, Action Input: direct_response
+- For data questions, use: Action: query_sql_db, Action Input: SQL query string only
+- Action Input must contain ONLY the SQL query string (no quotes, no formatting)
 - Do not include the tool name in the Action Input
 
 Begin!
@@ -76,7 +78,14 @@ Thought: {{agent_scratchpad}}
         description="Execute SQL queries against the database",
         func=lambda query: db.run(query),
     )
-    tools = [query_tool]
+    
+    skip_tool = Tool.from_function(
+        name="skip_sql", 
+        description="Skip SQL for greetings and non-data questions",
+        func=lambda x: "Ready for direct response",
+    )
+    
+    tools = [query_tool, skip_tool]
     prompt = PromptTemplate(
         template=prompt_template,
         input_variables=["input", "agent_scratchpad"],
@@ -90,8 +99,9 @@ Thought: {{agent_scratchpad}}
         agent=agent,
         tools=tools,
         verbose=True,
-        handle_parsing_errors=True,
-        max_iterations=5
+        handle_parsing_errors="Check your output and make sure it conforms to the format instructions!",
+        max_iterations=3,
+        early_stopping_method="generate"
     )
 
 @lru_cache(maxsize=1)
