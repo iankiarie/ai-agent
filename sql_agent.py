@@ -51,7 +51,7 @@ Current Date: {current_date}
 You have access to the following tool:
 {{tools}}
 
-Use the following format:
+Use the following format EXACTLY:
 Question: the input question you must answer
 Thought: you should always think about what to do
 Action: the action to take, must be: query_sql_db OR skip_sql (for greetings/non-data questions)
@@ -61,11 +61,12 @@ Observation: the result of the action
 Thought: I now know the final answer
 Final Answer: the final answer to the original input question
 
-IMPORTANT:
+CRITICAL FORMAT RULES:
 - For simple greetings (Hi, Hello, Hey), use: Action: skip_sql, Action Input: direct_response
 - For data questions, use: Action: query_sql_db, Action Input: SQL query string only
 - Action Input must contain ONLY the SQL query string (no quotes, no formatting)
-- Do not include the tool name in the Action Input
+- ALWAYS end with "Final Answer:" followed by your response
+- Do NOT include any extra text after getting the SQL results
 
 Begin!
 
@@ -99,9 +100,9 @@ Thought: {{agent_scratchpad}}
         agent=agent,
         tools=tools,
         verbose=True,
-        handle_parsing_errors="Check your output and make sure it conforms to the format instructions!",
-        max_iterations=3,
-        early_stopping_method="generate"
+        handle_parsing_errors=True,
+        max_iterations=2,
+        return_intermediate_steps=False
     )
 
 @lru_cache(maxsize=1)

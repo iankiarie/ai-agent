@@ -328,8 +328,10 @@ def handle_db_query(query: str, chiller_id: Optional[int] = None, history: Optio
     agent = get_sql_agent()
     try:
         result = agent.invoke({"input": prompt})
-        # FIX: Also check for 'output' key
-        text = result.get("final_answer") or result.get("text") or result.get("output") or ""
+        # Handle different possible result formats
+        text = result.get("output") or result.get("final_answer") or result.get("text") or ""
+        
+        # Clean up the text if it contains system messages
         if "anthropic" in text.lower():
             text = "Hi, I am Ketha AI! Ask me anything about your farm data."
         
@@ -364,6 +366,30 @@ def handle_db_query(query: str, chiller_id: Optional[int] = None, history: Optio
         }
     except Exception as e:
         logging.error(f"DB Query Error: {str(e)}", exc_info=True)
+        
+        # Special handling for parsing errors - try to extract useful info
+        error_msg = str(e)
+        if "Could not parse LLM output" in error_msg and "The last collection" in error_msg:
+            # Extract the actual response from parsing error
+            try:
+                start = error_msg.find("The last collection")
+                end = error_msg.find("For troubleshooting")
+                if start != -1 and end != -1:
+                    extracted_text = error_msg[start:end].strip().rstrip('`')
+                    return {
+                        "text": extracted_text,
+                        "final_answer": extracted_text,
+                        "data": [],
+                        "formats": format_results([]),
+                        "isReport": False,
+                        "isTable": False,
+                        "isChart": False,
+                        "chartConfig": {},
+                        "analysis": {}
+                    }
+            except:
+                pass
+        
         return {
             "text": "Sorry, I couldn't retrieve the requested data due to an internal error.",
             "final_answer": "Sorry, I couldn't retrieve the requested data due to an internal error.",
