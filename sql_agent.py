@@ -10,6 +10,31 @@ from datetime import datetime
 from functools import lru_cache
 import logging
 
+def validate_table_and_columns(table_name, column_names):
+    """Validate that table and columns exist in the database"""
+    engine = get_db_engine()
+    inspector = inspect(engine)
+    
+    # Check if table exists
+    available_tables = inspector.get_table_names()
+    if table_name not in available_tables:
+        return False
+    
+    # Check if columns exist
+    try:
+        table_columns = inspector.get_columns(table_name)
+        available_columns = [col['name'] for col in table_columns]
+        
+        for col in column_names:
+            if col not in available_columns:
+                return False
+        
+        return True
+    except Exception as e:
+        logging.error(f"Error validating columns for table {table_name}: {e}")
+        return False
+import re
+
 def get_sql_agent():
     engine = get_db_engine()
     db = SQLDatabase(engine)
@@ -20,31 +45,44 @@ def get_sql_agent():
 
     schema = get_schema_summary()
     joins = get_join_guides()
+    valid_schema = get_valid_tables_and_columns()
     current_date = datetime.now().strftime("%Y-%m-%d")
+    
+    # Create validation text for the prompt
+    validation_text = "VALID TABLES AND COLUMNS (YOU MUST ONLY USE THESE):\n"
+    for table, columns in valid_schema.items():
+        validation_text += f"Table '{table}': {', '.join(columns)}\n"
+    
     prompt_template = f"""
 You are an expert SQL developer assistant for a farming system.
 
-Database schema:
+{validation_text}
+
+Database schema with types:
 {schema}
 
 Join relationships:
 {joins}
 
-Rules:
-1. Always use table aliases.
-2. Verify column names exist.
-3. Use EXTRACT(YEAR FROM date_column) for years.
-4. Use DATE_TRUNC('month', date_column) for months.
-5. Never use SELECT * - always specify columns.
-6. Handle NULL values with COALESCE.
-7. For dates, use ISO format: 'YYYY-MM-DD'.
-8. If the user specifies a chiller ID, always filter results by that chiller ID (e.g., WHERE chiller_id = <chiller_id>). If not, do not filter by chiller ID.
-9. When referring to a chiller, always use its name (from users_chiller.name) not its ID, unless the user explicitly asks for the ID. Join users_farmer.chiller_id to users_chiller.id to get the name.
-10. When referring to a farmer, always use their name (from users_user.first_name, surname, or username) not their ID, unless the user explicitly asks for the ID. Join users_farmer.user_id to users_user.id to get the name.
-11. When referring to a user, always use their name (from users_user.first_name, surname, or username) not their ID, unless the user explicitly asks for the ID.
-12. When presenting results or answers, always refer to chillers, farmers, and users by their names instead of their IDs, unless the user explicitly asks for the ID.
-13. If a user question can be answered using the database (e.g., about farmers, milk, chillers, payments, collections, etc.), always use the database and generate a SQL query. Only answer from general knowledge if the question is not about the data in the database.
-14. For simple greetings like "Hi", "Hello", "Hey" - respond directly without using SQL queries.
+CRITICAL VALIDATION RULES - FOLLOW THESE EXACTLY:
+1. ONLY use table names and column names that exist in the VALID TABLES AND COLUMNS list above.
+2. If you reference a table or column that doesn't exist in the valid list, the query will FAIL.
+3. Double-check every table name and column name against the valid list before generating SQL.
+4. Always use table aliases for clarity.
+5. Never use SELECT * - always specify exact column names from the valid list.
+6. Use EXTRACT(YEAR FROM date_column) for years.
+7. Use DATE_TRUNC('month', date_column) for months.
+8. Handle NULL values with COALESCE.
+9. For dates, use ISO format: 'YYYY-MM-DD'.
+10. If the user specifies a chiller ID, always filter results by that chiller ID.
+11. When referring to a chiller, always use its name from users_chiller.name (not ID), unless user explicitly asks for ID.
+12. When referring to a farmer, always use their name from users_user.first_name or username (not ID), unless user explicitly asks for ID.
+13. For simple greetings like "Hi", "Hello", "Hey" - respond directly without SQL queries.
+
+BEFORE GENERATING ANY SQL:
+- Verify each table name exists in the valid tables list
+- Verify each column name exists for that specific table
+- If a table or column doesn't exist, explain what valid options are available
 
 Current Date: {current_date}
 
@@ -65,8 +103,9 @@ CRITICAL FORMAT RULES:
 - For simple greetings (Hi, Hello, Hey), use: Action: skip_sql, Action Input: direct_response
 - For data questions, use: Action: query_sql_db, Action Input: SQL query string only
 - Action Input must contain ONLY the SQL query string (no quotes, no formatting)
+- ALWAYS validate table and column names before generating SQL
 - ALWAYS end with "Final Answer:" followed by your response
-- Do NOT include any extra text after getting the SQL results
+- If a requested table/column doesn't exist, explain available options instead of generating invalid SQL
 
 Begin!
 
@@ -74,10 +113,31 @@ Question: {{input}}
 Thought: {{agent_scratchpad}}
 """
 
+    def validate_and_execute_sql(query: str):
+        """Validate SQL query against schema before execution"""
+        try:
+            # Basic validation - check if query contains valid table names
+            query_upper = query.upper()
+            valid_tables = set(valid_schema.keys())
+            
+            # Extract potential table names from query (simple approach)
+            potential_tables = []
+            for table in valid_tables:
+                if table.upper() in query_upper:
+                    potential_tables.append(table)
+            
+            if not potential_tables:
+                return "Error: No valid table names found in query. Available tables: " + ", ".join(valid_tables)
+            
+            # Execute the validated query
+            return db.run(query)
+        except Exception as e:
+            return f"SQL execution error: {str(e)}"
+
     query_tool = Tool.from_function(
         name="query_sql_db",
-        description="Execute SQL queries against the database",
-        func=lambda query: db.run(query),
+        description="Execute SQL queries against the database with validation",
+        func=validate_and_execute_sql,
     )
     
     skip_tool = Tool.from_function(
@@ -108,34 +168,56 @@ Thought: {{agent_scratchpad}}
 @lru_cache(maxsize=1)
 def get_schema_summary():
     """
-    Returns a concise schema summary for all tables in the connected database.
-    Example:
-    - users_chiller(id, name, location, reference)
-    - users_farmer(id, chiller_id, user_id, ...)
+    Returns a detailed schema summary with all valid table and column names.
+    This will be used to validate SQL queries.
     """
     engine = get_db_engine()
     inspector = inspect(engine)
     lines = []
     
-    # Get table names and limit processing to prevent memory issues
+    # Get table names and their complete column information
     table_names = sorted(inspector.get_table_names())
     
     for table_name in table_names:
         try:
             columns = inspector.get_columns(table_name)
-            col_names = [col['name'] for col in columns]
-            # Show up to 6 columns, then ellipsis if more
-            if len(col_names) > 6:
-                col_list = ', '.join(col_names[:6]) + ', ...'
-            else:
-                col_list = ', '.join(col_names)
-            lines.append(f"- {table_name}({col_list})")
+            col_details = []
+            for col in columns:
+                col_type = str(col['type'])
+                col_details.append(f"{col['name']} ({col_type})")
+            
+            # Show all columns for validation purposes
+            col_list = ', '.join(col_details)
+            lines.append(f"- {table_name}: {col_list}")
         except Exception as e:
             # Skip tables that cause issues to prevent memory problems
             logging.warning(f"Skipping table {table_name}: {e}")
             continue
     
     return "\n".join(lines)
+
+@lru_cache(maxsize=1)
+def get_valid_tables_and_columns():
+    """
+    Returns a dictionary of valid tables and their columns for strict validation.
+    """
+    engine = get_db_engine()
+    inspector = inspect(engine)
+    valid_schema = {}
+    
+    try:
+        table_names = sorted(inspector.get_table_names())
+        for table in table_names:
+            try:
+                columns = inspector.get_columns(table)
+                valid_schema[table] = [col['name'] for col in columns]
+            except Exception as e:
+                logging.warning(f"Skipping table {table}: {e}")
+                continue
+    except Exception as e:
+        logging.error(f"Error getting valid schema: {e}")
+    
+    return valid_schema
 
 @lru_cache(maxsize=1) 
 def get_join_guides():

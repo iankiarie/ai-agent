@@ -28,28 +28,27 @@ _sentence_model = None
 _generic_embeddings = None
 
 def get_sentence_model():
-    """Lazy load the sentence transformer model"""
+    """Lazy load the sentence transformer model - using lightweight model"""
     global _sentence_model
     if _sentence_model is None:
         from sentence_transformers import SentenceTransformer
-        _sentence_model = SentenceTransformer('all-MiniLM-L6-v2')
+        # Using much lighter model to save memory and improve performance
+        _sentence_model = SentenceTransformer('paraphrase-MiniLM-L3-v2')
     return _sentence_model
 
 def get_generic_embeddings():
-    """Lazy load generic response embeddings"""
+    """Lazy load generic response embeddings - focused on DB-related generic responses"""
     global _generic_embeddings
     if _generic_embeddings is None:
         from sentence_transformers import util
+        # More specific generic responses that indicate database query is needed
         GENERIC_RESPONSES = [
-            "I'm not sure.",
-            "I do not know.", 
-            "I don't have that information.",
-            "Sorry, I cannot answer that.",
-            "No information available.",
-            "Not available.",
-            "I have no idea.",
-            "I am unable to answer that.",
-            "I don't know the answer to that question."
+            "I don't have that information about your data.",
+            "I don't have access to your database.",
+            "I cannot provide information about your farm data.",
+            "I don't know about your specific data.",
+            "I don't have information about your farm.",
+            "I cannot access your farm records."
         ]
         model = get_sentence_model()
         _generic_embeddings = model.encode(GENERIC_RESPONSES)
@@ -118,6 +117,42 @@ def needs_db_query(query: str) -> bool:
         logging.info("Routing to Bedrock: simple greeting")
         return False
     
+    # General non-data questions that should go to Bedrock
+    general_patterns = [
+        r"what.*(weather|time|day|today)",
+        r"how to (cook|make|do|learn)",
+        r"what is (the|a) (capital|currency|population)",
+        r"who is the (president|minister|king|queen|leader)",
+        r"tell me about (history|science|politics)",
+        r"explain (physics|chemistry|biology)",
+        r"what does .* mean"
+    ]
+    
+    for pattern in general_patterns:
+        if re.search(pattern, query_lower):
+            logging.info(f"Routing to Bedrock: matched general pattern '{pattern}'")
+            return False
+    
+    # Contextual follow-up questions that likely refer to farm data
+    # These are very specific patterns for short follow-up questions
+    contextual_patterns = [
+        r"^who was (it|that|this)\s*from\s*\??$",
+        r"^who (did|made|performed) (it|that|this)\s*\??$",
+        r"^when was (it|that|this)\s*\??$",
+        r"^how much was (it|that|this)\s*\??$",
+        r"^what about (it|that|this)\s*\??$",
+        r"^(and )?who collected\s*\??$",
+        r"^(and )?who paid\s*\??$",
+        r"^which (farmer|chiller|staff)\s*\??$",
+        r"^who brought (it|that|this)\s*\??$",
+        r"^who delivered (it|that|this)\s*\??$"
+    ]
+    
+    for pattern in contextual_patterns:
+        if re.search(pattern, query_lower):
+            logging.info(f"Routing to DB: matched contextual pattern '{pattern}'")
+            return True
+    
     # Database-related keywords
     keywords = [
         "data", "milk", "collection", "farmer", "payment", "report", "table", 
@@ -131,6 +166,20 @@ def needs_db_query(query: str) -> bool:
     schema_words = get_schema_words()
     keywords.extend(schema_words)
     
+    # More specific patterns for data-related "what" questions
+    data_what_patterns = [
+        r"what is my (chiller|farmer|staff|user)",
+        r"what are my (farmers|collections|payments)",
+        r"what is the (total|amount|quantity|balance)",
+        r"what.*my (data|farm|business)"
+    ]
+    
+    # Check for data-specific "what" questions first
+    for pattern in data_what_patterns:
+        if re.search(pattern, query_lower):
+            logging.info(f"Routing to DB: matched data 'what' pattern '{pattern}'")
+            return True
+    
     entity_patterns = [
         r"\bmy\b", r"\bour\b", r"\bthe\b", r"\bthis\b", r"\bthese\b",
         r"\bchiller\s+\d+\b", r"\bfarm(er)?\s+\d+\b", r"\bstaff\s+\d+\b", r"\buser\s+\d+\b",
@@ -138,6 +187,9 @@ def needs_db_query(query: str) -> bool:
     ]
     
     for keyword in keywords:
+        # Skip generic words that might appear in non-data contexts
+        if keyword in ["what", "when", "where", "who", "which"]:
+            continue
         if re.search(rf"\b{re.escape(keyword)}\b", query_lower):
             logging.info(f"Routing to DB: matched keyword '{keyword}'")
             return True
@@ -151,11 +203,13 @@ def needs_db_query(query: str) -> bool:
         logging.info("Routing to DB: contains number and known entity")
         return True
         
+    # Only check for question words with farm-specific context
     question_words = ["what", "who", "when", "where", "how", "which"]
     if any(query_lower.startswith(qw) for qw in question_words):
-        if any(entity in query_lower for entity in schema_words):
-            logging.info("Routing to DB: question word and schema entity")
+        if any(entity in query_lower for entity in ["chiller", "farmer", "milk", "collection", "payment", "farm", "data"]):
+            logging.info("Routing to DB: question word with farm context")
             return True
+            
     logging.info("Routing to Bedrock: no DB match")
     return False
 
@@ -249,60 +303,68 @@ def generate_chart_config(df: pd.DataFrame) -> Optional[Dict[str, Any]]:
         print(f"Chart generation error: {str(e)}")
         return None
 
-GENERIC_PATTERNS = [
-    r"\bi (do not|don't) (know|have)\b",
-    r"\bno (information|data)\b",
-    r"\bnot (available|sure)\b",
-    r"\bsorry\b",
-    r"\bcannot answer\b",
-    r"\bunable to\b",
-    r"\bno idea\b"
-]
-
-def is_generic_response(text: str, threshold: float = 0.78) -> bool:
-    """Check if response is generic using optimized approach"""
-    if not text or len(text.strip().split()) < 6:
+def is_generic_response(text: str, threshold: float = 0.85) -> bool:
+    """Check if response is generic - only flag true generics that indicate DB query needed"""
+    if not text or len(text.strip()) == 0:
         return True
     
-    text_lower = text.lower()
+    text_lower = text.lower().strip()
     
-    # Quick hardcoded phrases check
-    GENERIC_RESPONSES = [
-        "I'm not sure.",
-        "I do not know.",
-        "I don't have that information.",
-        "Sorry, I cannot answer that.",
-        "No information available.",
-        "Not available.",
-        "I have no idea.",
-        "I am unable to answer that.",
-        "I don't know the answer to that question."
+    # Don't flag short responses like greetings as generic
+    if len(text_lower.split()) < 6:
+        # Check if it's a greeting or similar non-generic short response
+        greeting_patterns = [
+            r"^(hi|hello|hey|good morning|good afternoon|good evening)",
+            r"how are you",
+            r"nice to meet",
+            r"thank you",
+            r"thanks",
+            r"you're welcome",
+            r"goodbye|bye"
+        ]
+        if any(re.search(pattern, text_lower) for pattern in greeting_patterns):
+            return False  # Greetings are not generic
+    
+    # Only flag responses that explicitly indicate lack of information about data
+    TRULY_GENERIC_RESPONSES = [
+        "i don't have that information",
+        "i don't have information about",
+        "i don't have access to",
+        "i cannot access",
+        "i don't know about your",
+        "i don't have data about",
+        "i cannot provide information about your",
+        "i don't have access to your database",
+        "i cannot access your data"
     ]
     
-    if any(generic.lower() in text_lower for generic in GENERIC_RESPONSES):
+    # Check for explicit data-related generic responses
+    if any(generic in text_lower for generic in TRULY_GENERIC_RESPONSES):
         return True
     
-    # Regex patterns
-    if any(re.search(pattern, text_lower) for pattern in GENERIC_PATTERNS):
+    # More specific patterns for database-related generic responses
+    DB_GENERIC_PATTERNS = [
+        r"\bi (do not|don't) have (information|data) about your",
+        r"\bi cannot (provide|access) (your|the) (data|information)",
+        r"\bi (do not|don't) have access to your (database|data)",
+        r"\bno (information|data) available about your"
+    ]
+    
+    if any(re.search(pattern, text_lower) for pattern in DB_GENERIC_PATTERNS):
         return True
     
-    # Only use semantic similarity as last resort to save memory
-    try:
-        from sentence_transformers import util
-        model = get_sentence_model()
-        embeddings = get_generic_embeddings()
-        text_embedding = model.encode([text])
-        similarities = util.cos_sim(text_embedding, embeddings)
-        if similarities.max() > threshold:
-            return True
-    except Exception as e:
-        logging.warning(f"Semantic similarity check failed: {e}")
-    
-    # Too short or mostly hedging/modal
-    hedges = ["maybe", "perhaps", "possibly", "could", "might", "unsure", "uncertain"]
-    hedge_count = sum(1 for h in hedges if h in text_lower)
-    if hedge_count > 0 and len(text_lower.split()) < 12:
-        return True
+    # Only use semantic similarity for responses that might be data-related generics
+    if any(word in text_lower for word in ["data", "information", "database", "farm", "don't", "cannot", "unable"]):
+        try:
+            from sentence_transformers import util
+            model = get_sentence_model()
+            embeddings = get_generic_embeddings()
+            text_embedding = model.encode([text])
+            similarities = util.cos_sim(text_embedding, embeddings)
+            if similarities.max() > threshold:
+                return True
+        except Exception as e:
+            logging.warning(f"Semantic similarity check failed: {e}")
     
     return False
 
