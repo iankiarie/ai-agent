@@ -1,7 +1,6 @@
 from fastapi import FastAPI, HTTPException, Request, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
-from ai_utils import handle_db_query, handle_general_query, needs_db_query, is_generic_response
 from models import AIRequest, AIResponse
 from memory_utils import memory_cleanup, log_memory_usage, force_cleanup, get_detailed_memory_info
 from admin_dashboard import admin_metrics
@@ -20,7 +19,51 @@ import os
 # Load environment variables from .env file
 load_dotenv()
 
-app = FastAPI()
+# Configure logging first
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s"
+)
+logger = logging.getLogger(__name__)
+
+# Try to import AI utilities with error handling
+try:
+    from ai_utils import handle_db_query, handle_general_query, needs_db_query, is_generic_response
+    AI_ENABLED = True
+    logger.info("✅ AI utilities loaded successfully")
+except Exception as e:
+    logger.error(f"❌ Failed to load AI utilities: {e}")
+    AI_ENABLED = False
+    
+    # Fallback functions when AI is not available
+    async def handle_db_query(request):
+        return {"text": "Database queries are currently unavailable. Please check configuration.", "error": True}
+    
+    async def handle_general_query(request):
+        return {"text": "AI services are currently unavailable. Please check configuration.", "error": True}
+    
+    def needs_db_query(query):
+        return False
+    
+    def is_generic_response(response):
+        return True
+
+app = FastAPI(title="Ketha AI Agent", description="SQL Agent with Admin Dashboard")
+
+@app.on_event("startup")
+async def startup_event():
+    """Startup event handler"""
+    logger.info("🚀 Ketha AI Agent is starting up...")
+    logger.info(f"🔧 AI Services: {'Enabled' if AI_ENABLED else 'Disabled - Check AWS credentials and database'}")
+    logger.info("✅ Server startup completed successfully")
+
+@app.on_event("shutdown") 
+async def shutdown_event():
+    """Shutdown event handler"""
+    logger.info("🛑 Ketha AI Agent is shutting down...")
+    # Clean up resources
+    gc.collect()
+    logger.info("✅ Shutdown completed")
 
 # CORS configuration
 app.add_middleware(
@@ -61,10 +104,78 @@ class LimitedSessionStore:
 
 session_store = LimitedSessionStore()
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(message)s"
-)
+# Health check endpoint to ensure service stays alive
+@app.get("/health")
+async def health_check():
+    """Health check endpoint for monitoring"""
+    try:
+        return {
+            "status": "healthy",
+            "timestamp": time.time(),
+            "ai_enabled": AI_ENABLED,
+            "memory_mb": get_detailed_memory_info().get("used_mb", 0)
+        }
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        return {"status": "degraded", "error": str(e)}
+
+@app.get("/")
+async def root():
+    """Root endpoint - redirect to admin dashboard"""
+    return HTMLResponse(content="""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Ketha AI Agent</title>
+        <style>
+            body {
+                font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+                background: linear-gradient(135deg, #1e1b4b 0%, #312e81 50%, #1e1b4b 100%);
+                color: white;
+                margin: 0;
+                height: 100vh;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                text-align: center;
+            }
+            .container {
+                background: rgba(30, 27, 75, 0.8);
+                backdrop-filter: blur(20px);
+                border: 1px solid rgba(139, 92, 246, 0.3);
+                border-radius: 16px;
+                padding: 3rem;
+                box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+            }
+            h1 { color: #a78bfa; margin-bottom: 1rem; }
+            p { color: #cbd5e1; margin-bottom: 2rem; }
+            .btn {
+                background: linear-gradient(135deg, #8b5cf6, #6366f1);
+                color: white;
+                border: none;
+                padding: 1rem 2rem;
+                border-radius: 8px;
+                text-decoration: none;
+                display: inline-block;
+                font-weight: 600;
+                margin: 0.5rem;
+                transition: transform 0.2s;
+            }
+            .btn:hover { transform: translateY(-2px); }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>Ketha AI Agent</h1>
+            <p>Your intelligent SQL agent is running successfully!</p>
+            <a href="/admin" class="btn">Access Admin Dashboard</a>
+            <a href="/docs" class="btn">API Documentation</a>
+        </div>
+    </body>
+    </html>
+    """)
 
 @app.post("/query", response_model=AIResponse)
 @memory_cleanup
@@ -396,6 +507,29 @@ def generate_optimization_recommendations(stats):
     return recommendations
 
 if __name__ == "__main__":
-    import uvicorn
-    port = int(os.environ.get("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    try:
+        import uvicorn
+        port = int(os.environ.get("PORT", 8000))
+        logger.info(f"🚀 Starting Ketha AI Agent on port {port}")
+        logger.info(f"🔧 AI Services: {'Enabled' if AI_ENABLED else 'Disabled'}")
+        logger.info(f"🌐 Access admin dashboard at: http://localhost:{port}/admin")
+        
+        # Test critical components before starting
+        try:
+            test_memory = get_detailed_memory_info()
+            logger.info(f"💾 Memory check: {test_memory.get('used_mb', 0)}MB used")
+        except Exception as e:
+            logger.warning(f"⚠️ Memory monitoring may be limited: {e}")
+        
+        uvicorn.run(
+            app, 
+            host="0.0.0.0", 
+            port=port,
+            access_log=True,
+            log_level="info"
+        )
+    except Exception as e:
+        logger.error(f"❌ Failed to start server: {e}")
+        logger.error("🔍 Check your environment variables and dependencies")
+        import traceback
+        traceback.print_exc()
