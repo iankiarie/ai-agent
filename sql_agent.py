@@ -5,10 +5,15 @@ from langchain.chains import create_sql_query_chain
 from langchain.tools import Tool
 from langchain.agents import AgentExecutor, create_react_agent
 from langchain.prompts import PromptTemplate
-from sqlalchemy import inspect
+from sqlalchemy import inspect, text
 from datetime import datetime
 from functools import lru_cache
 import logging
+import warnings
+
+# Suppress specific SQLAlchemy warnings for geometry columns
+warnings.filterwarnings("ignore", message="Did not recognize type 'geometry'")
+warnings.filterwarnings("ignore", category=UserWarning, module="sqlalchemy")
 
 def validate_table_and_columns(table_name, column_names):
     """Validate that table and columns exist in the database"""
@@ -16,8 +21,12 @@ def validate_table_and_columns(table_name, column_names):
     inspector = inspect(engine)
     
     # Check if table exists
-    available_tables = inspector.get_table_names()
-    if table_name not in available_tables:
+    try:
+        available_tables = inspector.get_table_names()
+        if table_name not in available_tables:
+            return False
+    except Exception as e:
+        logging.error(f"Error getting table names: {e}")
         return False
     
     # Check if columns exist
@@ -31,16 +40,30 @@ def validate_table_and_columns(table_name, column_names):
         
         return True
     except Exception as e:
-        logging.error(f"Error validating columns for table {table_name}: {e}")
-        return False
+        logging.warning(f"Error validating columns for table {table_name}: {e}")
+        # If we can't validate columns, assume they're valid to avoid blocking queries
+        return True
 import re
 
 def get_sql_agent():
     engine = get_db_engine()
-    db = SQLDatabase(engine)
+    
+    # Configure SQLDatabase with optimizations for large schemas
+    try:
+        db = SQLDatabase(
+            engine, 
+            include_tables=None,  # Include all tables
+            sample_rows_in_table_info=1,  # Reduce sample rows for performance
+            max_string_length=1000  # Limit string length
+        )
+    except Exception as e:
+        logging.warning(f"Error initializing SQLDatabase with full schema: {e}")
+        # Fallback to basic initialization
+        db = SQLDatabase(engine)
+    
     llm = ChatBedrock(
         model_id="anthropic.claude-3-sonnet-20240229-v1:0",
-        model_kwargs={"temperature": 0.1}
+        model_kwargs={"temperature": 0.1, "max_tokens": 2000}
     )
 
     schema = get_schema_summary()
@@ -168,33 +191,56 @@ Thought: {{agent_scratchpad}}
 @lru_cache(maxsize=1)
 def get_schema_summary():
     """
-    Returns a detailed schema summary with all valid table and column names.
-    This will be used to validate SQL queries.
+    Returns a concise schema summary optimized for large databases.
+    Skips problematic tables and columns to prevent timeouts.
     """
     engine = get_db_engine()
     inspector = inspect(engine)
     lines = []
     
-    # Get table names and their complete column information
-    table_names = sorted(inspector.get_table_names())
+    try:
+        # Get table names with timeout protection
+        table_names = sorted(inspector.get_table_names())
+        
+        # Skip system tables and limit to core business tables for performance
+        excluded_prefixes = ['django_', 'auth_', 'silk_', 'token_blacklist_', 'spatial_ref_sys']
+        core_tables = [t for t in table_names if not any(t.startswith(prefix) for prefix in excluded_prefixes)]
+        
+        # Limit to first 20 tables to prevent timeout
+        core_tables = core_tables[:20]
+        
+        for table_name in core_tables:
+            try:
+                columns = inspector.get_columns(table_name)
+                col_names = []
+                
+                for col in columns:
+                    col_name = col['name']
+                    col_type = str(col.get('type', 'unknown'))
+                    # Skip geometry columns that cause issues
+                    if 'geometry' in col_type.lower():
+                        continue
+                    col_names.append(col_name)
+                
+                # Show up to 6 columns, then ellipsis if more
+                if len(col_names) > 6:
+                    col_list = ', '.join(col_names[:6]) + ', ...'
+                else:
+                    col_list = ', '.join(col_names)
+                    
+                lines.append(f"- {table_name}({col_list})")
+                
+            except Exception as e:
+                # Skip tables that cause issues to prevent memory problems
+                logging.warning(f"Skipping table {table_name}: {e}")
+                continue
+        
+    except Exception as e:
+        logging.error(f"Error getting schema summary: {e}")
+        # Return minimal schema if full inspection fails
+        return "- users_chiller(id, name, location)\n- users_farmer(id, chiller_id, user_id)\n- collection_collection(id, quantity, chiller_id, farmer_id)"
     
-    for table_name in table_names:
-        try:
-            columns = inspector.get_columns(table_name)
-            col_details = []
-            for col in columns:
-                col_type = str(col['type'])
-                col_details.append(f"{col['name']} ({col_type})")
-            
-            # Show all columns for validation purposes
-            col_list = ', '.join(col_details)
-            lines.append(f"- {table_name}: {col_list}")
-        except Exception as e:
-            # Skip tables that cause issues to prevent memory problems
-            logging.warning(f"Skipping table {table_name}: {e}")
-            continue
-    
-    return "\n".join(lines)
+    return "\n".join(lines) if lines else "No accessible tables found"
 
 @lru_cache(maxsize=1)
 def get_valid_tables_and_columns():

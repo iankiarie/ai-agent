@@ -12,7 +12,19 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 
 def get_db_engine():
     try:
-        return create_engine(DATABASE_URL)
+        # Add connection pool settings and timeout
+        engine = create_engine(
+            DATABASE_URL,
+            pool_size=5,
+            max_overflow=10,
+            pool_timeout=30,
+            pool_recycle=3600,
+            connect_args={
+                "connect_timeout": 10,
+                "application_name": "ketha_ai_agent"
+            }
+        )
+        return engine
     except Exception as e:
         print(f"Database connection error: {str(e)}")
         raise
@@ -24,6 +36,8 @@ def execute_query(query: str):
             
         engine = get_db_engine()
         with engine.connect() as connection:
+            # Set query timeout to prevent hanging
+            connection.execute(text("SET statement_timeout = '30s'"))
             result = connection.execute(text(query))
             return [dict(row) for row in result.mappings()]
     except SQLAlchemyError as e:
